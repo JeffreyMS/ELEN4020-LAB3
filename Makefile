@@ -33,14 +33,18 @@ include Defines.mk
 
 default: all
 
-all: $(TARGET) wc
+all: $(TARGET) wc ii
 
 $(TARGET):
 	@$(MAKE) -C $(SRC_DIR) --no-print-directory
 
 wc:
 	@$(MAKE) -C $(WC_DIR) --no-print-directory
- 
+
+ii:
+	@$(MAKE) -C $(II_DIR) --no-print-directory
+
 clean:
 	@$(MAKE) -C $(SRC_DIR) clean --no-print-directory
 	@$(MAKE) -C $(WC_DIR) clean --no-print-directory
+	@$(MAKE) -C $(II_DIR) clean --no-print-directory

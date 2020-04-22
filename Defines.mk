@@ -94,3 +94,4 @@ SRC_DIR = src
 LIB_DIR = lib
 INC_DIR = include
 WC_DIR = word_count
+II_DIR = inverted_index

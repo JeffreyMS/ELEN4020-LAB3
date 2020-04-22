@@ -30,6 +30,10 @@
 #include <string.h>
 #include <ctype.h>
 
+#ifdef TBB
+#include "tbb/scalable_allocator.h"
+#endif
+
 #include "map_reduce.h"
 #define DEFAULT_DISP_NUM 10
 
@@ -67,8 +71,15 @@ struct wc_word_hash
     }
 };
 
-
-class WordsMR : public MapReduceSort<WordsMR, wc_string, wc_word, uint64_t, hash_container<wc_word, uint64_t, sum_combiner, wc_word_hash> >
+#ifdef MUST_USE_FIXED_HASH
+class WordsMR : public MapReduceSort<WordsMR, wc_string, wc_word, uint64_t, fixed_hash_container<wc_word, uint64_t, sum_combiner, 32768, wc_word_hash
+#else
+class WordsMR : public MapReduceSort<WordsMR, wc_string, wc_word, uint64_t, hash_container<wc_word, uint64_t, sum_combiner, wc_word_hash 
+#endif
+#ifdef TBB
+    , tbb::scalable_allocator
+#endif
+> >
 {
     char* data;
     uint64_t data_size;
@@ -144,7 +155,7 @@ public:
     }
 };
 
-
+#define NO_MMAP
 
 int main(int argc, char *argv[]) 
 {
@@ -173,7 +184,17 @@ int main(int argc, char *argv[])
     CHECK_ERROR((fd = open(fname, O_RDONLY)) < 0);
     // Get the file info (for file length)
     CHECK_ERROR(fstat(fd, &finfo) < 0);
-
+#ifndef NO_MMAP
+#ifdef MMAP_POPULATE
+    // Memory map the file
+    CHECK_ERROR((fdata = (char*)mmap(0, finfo.st_size + 1, 
+        PROT_READ, MAP_PRIVATE | MAP_POPULATE, fd, 0)) == NULL);
+#else
+    // Memory map the file
+    CHECK_ERROR((fdata = (char*)mmap(0, finfo.st_size + 1, 
+        PROT_READ, MAP_PRIVATE, fd, 0)) == NULL);
+#endif
+#else
     uint64_t r = 0;
 
     fdata = (char *)malloc (finfo.st_size);
@@ -181,7 +202,7 @@ int main(int argc, char *argv[])
     while(r < (uint64_t)finfo.st_size)
         r += pread (fd, fdata + r, finfo.st_size, r);
     CHECK_ERROR (r != (uint64_t)finfo.st_size);
-
+#endif    
     
     // Get the number of results to display
     CHECK_ERROR((disp_num = (disp_num_str == NULL) ? 
@@ -189,9 +210,9 @@ int main(int argc, char *argv[])
 
     get_time (end);
 
-    #ifdef TIMING
+#ifdef TIMING
     print_time("initialize", begin, end);
-    #endif
+#endif
 
     printf("Wordcount: Calling MapReduce Scheduler Wordcount\n");
     get_time (begin);
@@ -200,9 +221,9 @@ int main(int argc, char *argv[])
     CHECK_ERROR( mapReduce.run(result) < 0);
     get_time (end);
 
-    #ifdef TIMING
+#ifdef TIMING
     print_time("library", begin, end);
-    #endif
+#endif
     printf("Wordcount: MapReduce Completed\n");
 
     get_time (begin);
@@ -222,15 +243,18 @@ int main(int argc, char *argv[])
 
     printf("Total: %lu\n", total);
 
+#ifndef NO_MMAP
+    CHECK_ERROR(munmap(fdata, finfo.st_size + 1) < 0);
+#else
     free (fdata);
-
+#endif
     CHECK_ERROR(close(fd) < 0);
 
     get_time (end);
 
-    #ifdef TIMING
+#ifdef TIMING
     print_time("finalize", begin, end);
-    #endif
+#endif
 
     return 0;
 }
