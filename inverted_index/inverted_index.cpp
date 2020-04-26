@@ -30,6 +30,7 @@
 #include <string.h>
 #include <ctype.h>
 #include <atomic>
+#include <algorithm>
 
 #include "map_reduce.h"
 #define DEFAULT_DISP_NUM 10
@@ -71,6 +72,11 @@ struct wc_word_hash
 struct chunk_details{
     uint64_t chunk_no;
     uint64_t total_lines;
+    uint64_t start;
+    char* data;;
+    bool operator<(chunk_details const& other) const {
+    return (chunk_no < other.chunk_no);
+    }
 };
 
 struct find_word{
@@ -89,12 +95,14 @@ class WordsMR : public MapReduceSort<WordsMR, wc_string, wc_word, uint64_t, hash
     uint64_t splitter_pos;
     std::vector <find_word> match;
     std::vector <chunk_details> chunk_status;
+    std::vector <chunk_details> current_chunk;
     std::atomic<int> chunk_no_;
+    uint64_t number_of_chunks;
 
 public:
     explicit WordsMR(char* _data, uint64_t length, uint64_t _chunk_size) :
         data(_data), data_size(length), chunk_size(_chunk_size), 
-            splitter_pos(0) {}
+            splitter_pos(0) {chunk_no_ = 0; number_of_chunks = 1;}
 
     void* locate(data_type* str, uint64_t len) const
     {
@@ -115,8 +123,17 @@ public:
     
     void map(data_type const& s, map_container& out) const
     {
+
         chunk_details temp;
-         
+        int index_;
+
+        for(int i=0; i < current_chunk.size(); i++){
+            if(current_chunk.at(i).data == s.data){
+                temp = current_chunk.at(i);
+                index_ = i;
+            }
+        }
+
         for (uint64_t i = 0; i < s.len; i++)
         {
             s.data[i] = toupper(s.data[i]);
@@ -124,17 +141,6 @@ public:
 
         uint64_t count_lines = 1;
         temp.total_lines = count_lines;
-
-        if(chunk_status.empty()){ 
-            chunk_no_ = {1};
-            temp.chunk_no = chunk_no_.load();
-            chunk_status.push_back(temp);
-        }else{
-
-            chunk_no_ = {chunk_status.size()+1};
-            temp.chunk_no = chunk_no_.load();
-            chunk_status.push_back(temp); 
-        }
 
         uint64_t i = 0;
         while(i < s.len)
@@ -157,19 +163,23 @@ public:
                 wc_word word = { s.data+start };
                 for(uint64_t k = 0; k < match.size(); k++){
                     if(word == match.at(k).word){
-                        //printf("*** %15s **** \n", word.data);
-                        if(match.at(k).chunk_no.size()<1)match.at(k).chunk_no.push_back( temp.chunk_no);
-                        if(match.at(k).line.empty())match.at(k).line.push_back(count_lines);
-                        else if(count_lines>match.at(k).line.at(match.at(k).line.size()-1) && match.at(k).line.size()<=10)
-                        match.at(k).line.push_back(count_lines);
+
+                        if(match.at(k).line.empty()){
+                            match.at(k).line.push_back(count_lines+1- current_chunk.at(index_).chunk_no);
+                            match.at(k).chunk_no.push_back(current_chunk.at(index_).chunk_no);
+                        }
+                        else if(count_lines>match.at(k).line.at(match.at(k).line.size()-1) && match.at(k).line.size()<=10){
+                        match.at(k).line.push_back(count_lines+1- current_chunk.at(index_).chunk_no);
+                        match.at(k).chunk_no.push_back(current_chunk.at(index_).chunk_no);
+                        }
                     }
                 }
-                //printf("*** %15s **** %15s *****\n", word.data, match.at(0).word);
-                //emit_intermediate(out, word, 1);
+
             }
         }
-                
+        
         chunk_status.push_back(temp);
+
     }
 
     /** wordcount split()
@@ -177,11 +187,16 @@ public:
      */
     int split(wc_string& out)
     {
+        
         /* End of data reached, return FALSE. */
         if ((uint64_t)splitter_pos >= data_size)
         {
             return 0;
         }
+
+        chunk_details temp;
+        //temp.start = splitter_pos;
+        temp.chunk_no = number_of_chunks;
 
         /* Determine the nominal end point. */
         uint64_t end = std::min(splitter_pos + chunk_size, data_size);
@@ -195,32 +210,45 @@ public:
         /* Set the start of the next data. */
         out.data = data + splitter_pos;
         out.len = end - splitter_pos;
+
+        temp.data = out.data;
         
         splitter_pos = end;
+
+        current_chunk.push_back(temp);
+        number_of_chunks++;
 
         /* Return true since the out data is valid. */
         return 1;
     }
 
-    // bool sort(keyval const& a, keyval const& b) const
-    // {
-    //     return a.val < b.val || (a.val == b.val && strcmp(a.key.data, b.key.data) > 0);
-    // }
-
     void display(){
+
+        std::sort(chunk_status.begin(),chunk_status.end());
+
         for(uint64_t i = 0; i < match.size(); i++){
             printf(match.at(i).word.data );
-            printf("at chunk no. %d - Lines are :" , match.at(i).chunk_no.at(0));
+            printf(" - Lines are :");
+
             for(uint64_t j = 0; j < match.at(i).line.size(); j++){
-            if(match.at(i).chunk_no.at(0)==1)printf(" %d ",match.at(i).line.at(j) );
-            else if(match.at(i).chunk_no.at(0)>1){
-            //for(int m = 0; m < match.at(i).chunk_no.at(0); m++)
-            }
+
+                if(match.at(i).chunk_no.at(j)<2)
+                    printf(" %d",match.at(i).line.at(j) );
+
+                 else if(match.at(i).chunk_no.at(j)>1){
+                    int line_no_t = match.at(i).line.at(j);
+
+                    for(int m = 0; m < match.at(i).chunk_no.at(j)-1; m++){
+                        line_no_t += chunk_status.at(m).total_lines;
+                    }
+                    printf(" %d ",line_no_t );
+                 }
             
             }
             printf("\n" );
         }
-    }
+     }
+
 };
 
 
@@ -277,7 +305,7 @@ int main(int argc, char *argv[])
     std::vector<WordsMR::keyval> result;    
     WordsMR mapReduce(fdata, finfo.st_size, 1024*1024);
 
-    mapReduce.addWord("Nkosana");
+    mapReduce.addWord("mabuza");
     mapReduce.addWord("Sherlock");
     CHECK_ERROR( mapReduce.run(result) < 0);
     get_time (end);
@@ -291,18 +319,6 @@ int main(int argc, char *argv[])
 
     unsigned int dn = std::min(disp_num, (unsigned int)result.size());
     printf("\nWordcount: Results (TOP %d of %lu):\n", dn, result.size());
-    // uint64_t total = 0;
-    // for (size_t i = 0; i < dn; i++)
-    // {
-    //     printf("%15s - %lu\n", result[result.size()-1-i].key.data, result[result.size()-1-i].val);
-    // }
-
-    // for(size_t i = 0; i < result.size(); i++)
-    // {
-    //     total += result[i].val;
-    // }
-
-    // printf("Total: %lu\n", total);
 
     mapReduce.display();
 
