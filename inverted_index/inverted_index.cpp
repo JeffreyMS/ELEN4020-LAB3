@@ -276,7 +276,7 @@ int main(int argc, char *argv[])
     fname = argv[1];
     disp_num_str = argv[2];
 
-    printf("Wordcount: Running...\n");
+    printf("Inverted_index: Running...\n");
 
     // Read in the file
     CHECK_ERROR((fd = open(fname, O_RDONLY)) < 0);
@@ -307,7 +307,7 @@ int main(int argc, char *argv[])
     print_time("initialize", begin, end);
     #endif
 
-    printf("Wordcount: Calling MapReduce Scheduler Wordcount\n");
+    printf("Inverted_index: Calling MapReduce Scheduler Wordcount\n");
     get_time (begin);
     std::vector<WordsMR::keyval> result;    
     WordsMR mapReduce(fdata, finfo.st_size, 1024*1024);
@@ -335,12 +335,11 @@ int main(int argc, char *argv[])
     #ifdef TIMING
     print_time("library", begin, end);
     #endif
-    printf("Wordcount: MapReduce Completed\n");
+    printf("Inverted_index: MapReduce Completed\n");
 
     get_time (begin);
 
-    unsigned int dn = std::min(disp_num, (unsigned int)result.size());
-    printf("\nWordcount: Results (TOP %d of %lu):\n", dn, result.size());
+    printf("\nInverted_index Results:\n");
 
     mapReduce.display(disp_num);
 
