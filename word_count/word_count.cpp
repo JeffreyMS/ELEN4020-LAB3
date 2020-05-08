@@ -104,11 +104,6 @@ public:
             s.data[i] = toupper(s.data[i]);
         }
 
-        
-        // for(int k = 0; k < stopwords.size(); k++){
-        //     printf("%d stop word - %15s \n",k, stopwords.at(k).data);
-        // }
-        // printf("%d \n\n",stopwords.size());
 
         uint64_t i = 0;
         while(i < s.len)
@@ -123,12 +118,9 @@ public:
                 s.data[i] = 0;
                 wc_word word = { s.data+start };
                 bool present = false;
-                //printf("first stop word - %15s\n", stopwords.at(0).data);
-                //if(stopwords.at(0) == wc_word{"z"})printf("below\n\n");
 
                 for(int k = 0; k < stopwords.size(); k++){
                     if(stopwords.at(k) == word){
-                        //printf("present\n");
                         present = true;
                         break;
                     }
