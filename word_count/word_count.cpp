@@ -29,6 +29,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <ctype.h>
+#include <fstream>
 
 #ifdef TBB
 #include "tbb/scalable_allocator.h"
@@ -85,6 +86,7 @@ class WordsMR : public MapReduceSort<WordsMR, wc_string, wc_word, uint64_t, hash
     uint64_t data_size;
     uint64_t chunk_size;
     uint64_t splitter_pos;
+    std::vector<wc_word> stopwords;
 public:
     explicit WordsMR(char* _data, uint64_t length, uint64_t _chunk_size) :
         data(_data), data_size(length), chunk_size(_chunk_size), 
@@ -102,6 +104,12 @@ public:
             s.data[i] = toupper(s.data[i]);
         }
 
+        
+        // for(int k = 0; k < stopwords.size(); k++){
+        //     printf("%d stop word - %15s \n",k, stopwords.at(k).data);
+        // }
+        // printf("%d \n\n",stopwords.size());
+
         uint64_t i = 0;
         while(i < s.len)
         {            
@@ -114,7 +122,19 @@ public:
             {
                 s.data[i] = 0;
                 wc_word word = { s.data+start };
-                emit_intermediate(out, word, 1);
+                bool present = false;
+                //printf("first stop word - %15s\n", stopwords.at(0).data);
+                //if(stopwords.at(0) == wc_word{"z"})printf("below\n\n");
+
+                for(int k = 0; k < stopwords.size(); k++){
+                    if(stopwords.at(k) == word){
+                        //printf("present\n");
+                        present = true;
+                        break;
+                    }
+                }
+
+                if(!present)emit_intermediate(out, word, 1);
             }
         }
     }
@@ -149,6 +169,19 @@ public:
         return 1;
     }
 
+    void set_stopwords(char stop_words_[]){
+        
+        char *stop_words = strdup(stop_words_);
+        int len = (int)strlen(stop_words);
+        if(stop_words == NULL)return;
+
+        for(uint64_t i = 0; i < len ; i++)stop_words[i] = toupper(stop_words[i]);
+
+        wc_word temp;
+        temp.data = stop_words;
+        stopwords.push_back(temp);
+    }
+
     bool sort(keyval const& a, keyval const& b) const
     {
         return a.val < b.val || (a.val == b.val && strcmp(a.key.data, b.key.data) > 0);
@@ -165,6 +198,9 @@ int main(int argc, char *argv[])
     struct stat finfo;
     char * fname, * disp_num_str;
     struct timespec begin, end;
+    //std::vector<wc_word> stopwords;
+    FILE* stopwords_f;
+    stopwords_f = fopen("./word_count/stopwords.txt", "r");
 
     get_time (begin);
 
@@ -203,6 +239,11 @@ int main(int argc, char *argv[])
         r += pread (fd, fdata + r, finfo.st_size, r);
     CHECK_ERROR (r != (uint64_t)finfo.st_size);
 #endif    
+    //read stop words
+    if (!stopwords_f) {
+        printf("Unable to open file stopwords.txt\n");
+        exit(1);   // call system to stop
+    }
     
     // Get the number of results to display
     CHECK_ERROR((disp_num = (disp_num_str == NULL) ? 
@@ -218,6 +259,25 @@ int main(int argc, char *argv[])
     get_time (begin);
     std::vector<WordsMR::keyval> result;    
     WordsMR mapReduce(fdata, finfo.st_size, 1024*1024);
+
+    //Initialize stop words
+    char stop_word[20];
+     while (fscanf(stopwords_f,"%15s",stop_word) != EOF )
+     {
+         char temp[1];
+        char *tt = temp;
+        for(int i = 0; i < 20; i++)
+            if(!isalpha(stop_word[i]))
+            {
+                tt[i] = 0;
+                break;
+            }
+            else tt[i] = stop_word[i];
+            
+         mapReduce.set_stopwords(tt);
+     }
+    close(stopwords_f);
+
     CHECK_ERROR( mapReduce.run(result) < 0);
     get_time (end);
 
@@ -260,3 +320,5 @@ int main(int argc, char *argv[])
 }
 
 // vim: ts=8 sw=4 sts=4 smarttab smartindent
+
+
