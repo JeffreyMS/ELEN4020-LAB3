@@ -29,11 +29,10 @@
 #include <fcntl.h>
 #include <string.h>
 #include <ctype.h>
-#include <atomic>
 #include <algorithm>
 
 #include "map_reduce.h"
-#define DEFAULT_DISP_NUM 10
+#define DEFAULT_DISP_NUM 50
 
 // a passage from the text. The input data to the Map-Reduce
 struct wc_string {
@@ -73,7 +72,7 @@ struct chunk_details{
     uint64_t chunk_no;
     uint64_t total_lines;
     uint64_t start;
-    char* data;;
+    char* data;
     bool operator<(chunk_details const& other) const {
     return (chunk_no < other.chunk_no);
     }
@@ -82,7 +81,7 @@ struct chunk_details{
 struct find_word{
     wc_word word;
     //int chunk_no[1];
-    std::vector <uint64_t> line;
+    std::vector <std::vector <uint64_t>> line;
     std::vector <uint64_t> chunk_no;
 };
 
@@ -96,13 +95,14 @@ class WordsMR : public MapReduceSort<WordsMR, wc_string, wc_word, uint64_t, hash
     std::vector <find_word> match;
     std::vector <chunk_details> chunk_status;
     std::vector <chunk_details> current_chunk;
-    std::atomic<int> chunk_no_;
+    //std::atomic<int> chunk_no_;
     uint64_t number_of_chunks;
+    std::vector<wc_word> stopwords;
 
 public:
     explicit WordsMR(char* _data, uint64_t length, uint64_t _chunk_size) :
         data(_data), data_size(length), chunk_size(_chunk_size), 
-            splitter_pos(0) {chunk_no_ = 0; number_of_chunks = 1;}
+            splitter_pos(0) { number_of_chunks = 1;}
 
     void* locate(data_type* str, uint64_t len) const
     {
@@ -161,18 +161,17 @@ public:
             {
                 s.data[i] = 0;
                 wc_word word = { s.data+start };
+
                 for(uint64_t k = 0; k < match.size(); k++){
                     if(word == match.at(k).word){
+   
+                        if(match.at(k).line.at(index_).empty())
+                        match.at(k).line.at(index_).push_back(count_lines);
+                        else if(count_lines>match.at(k).line.at(index_).at(match.at(k).line.at(index_).size()-1) )
+                        match.at(k).line.at(index_).push_back(count_lines);
 
-                        if(match.at(k).line.empty()){
-                            match.at(k).line.push_back(count_lines+1- current_chunk.at(index_).chunk_no);
-                            match.at(k).chunk_no.push_back(current_chunk.at(index_).chunk_no);
-                        }
-                        else if(count_lines>match.at(k).line.at(match.at(k).line.size()-1) && match.at(k).line.size()<=10){
-                        match.at(k).line.push_back(count_lines+1- current_chunk.at(index_).chunk_no);
-                        match.at(k).chunk_no.push_back(current_chunk.at(index_).chunk_no);
-                        }
                     }
+                    
                 }
 
             }
@@ -195,7 +194,6 @@ public:
         }
 
         chunk_details temp;
-        //temp.start = splitter_pos;
         temp.chunk_no = number_of_chunks;
 
         /* Determine the nominal end point. */
@@ -215,6 +213,8 @@ public:
         
         splitter_pos = end;
 
+        /******** I want to know how many rows does each word have ******/
+        for(uint64_t k = 0; k < match.size(); k++)match.at(k).line.push_back(std::vector <uint64_t>());
         current_chunk.push_back(temp);
         number_of_chunks++;
 
@@ -222,31 +222,31 @@ public:
         return 1;
     }
 
-    void display(){
+    void display(int Num_Display){
 
-        std::sort(chunk_status.begin(),chunk_status.end());
+         std::sort(chunk_status.begin(),chunk_status.end());
 
         for(uint64_t i = 0; i < match.size(); i++){
             printf(match.at(i).word.data );
             printf(" - Lines are :");
 
+            int tot_lines = 0;
+            int num_of_display = 0;
             for(uint64_t j = 0; j < match.at(i).line.size(); j++){
+                
+                for(uint64_t m = 0; m < match.at(i).line.at(j).size(); m++){
+                    num_of_display++;
+                    printf(" %d", match.at(i).line.at(j).at(m)+tot_lines);
+                    if(num_of_display >= Num_Display)break;
+                }
+                tot_lines += chunk_status.at(j).total_lines -1;
 
-                if(match.at(i).chunk_no.at(j)<2)
-                    printf(" %d",match.at(i).line.at(j) );
-
-                 else if(match.at(i).chunk_no.at(j)>1){
-                    int line_no_t = match.at(i).line.at(j);
-
-                    for(int m = 0; m < match.at(i).chunk_no.at(j)-1; m++){
-                        line_no_t += chunk_status.at(m).total_lines;
-                    }
-                    printf(" %d ",line_no_t );
-                 }
-            
+                if(num_of_display >= Num_Display)break;
+                
             }
             printf("\n" );
         }
+        
      }
 
 };
@@ -261,6 +261,8 @@ int main(int argc, char *argv[])
     struct stat finfo;
     char * fname, * disp_num_str;
     struct timespec begin, end;
+    FILE* check_list_f;
+    check_list_f = fopen("./inverted_index/given_list.txt", "r");
 
     get_time (begin);
 
@@ -289,6 +291,11 @@ int main(int argc, char *argv[])
         r += pread (fd, fdata + r, finfo.st_size, r);
     CHECK_ERROR (r != (uint64_t)finfo.st_size);
 
+    //read stop words
+    if (!check_list_f) {
+        printf("Unable to open file stopwords.txt\n");
+        exit(1);   // call system to stop
+    }
     
     // Get the number of results to display
     CHECK_ERROR((disp_num = (disp_num_str == NULL) ? 
@@ -305,8 +312,23 @@ int main(int argc, char *argv[])
     std::vector<WordsMR::keyval> result;    
     WordsMR mapReduce(fdata, finfo.st_size, 1024*1024);
 
-    mapReduce.addWord("mabuza");
-    mapReduce.addWord("Sherlock");
+    //Words to find line numbers
+    char stop_word[20];
+     while (fscanf(check_list_f,"%15s",stop_word) != EOF )
+     {
+         char temp[1];
+        char *tt = temp;
+        for(int i = 0; i < 20; i++)
+            if(!isalpha(stop_word[i]))
+            {
+                tt[i] = 0;
+                break;
+            }
+            else tt[i] = stop_word[i];
+            
+         mapReduce.addWord(tt);
+     }
+    close(check_list_f);
     CHECK_ERROR( mapReduce.run(result) < 0);
     get_time (end);
 
@@ -320,7 +342,7 @@ int main(int argc, char *argv[])
     unsigned int dn = std::min(disp_num, (unsigned int)result.size());
     printf("\nWordcount: Results (TOP %d of %lu):\n", dn, result.size());
 
-    mapReduce.display();
+    mapReduce.display(disp_num);
 
     free (fdata);
 
