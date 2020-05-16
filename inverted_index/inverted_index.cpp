@@ -71,7 +71,6 @@ struct wc_word_hash
 struct chunk_details{
     uint64_t chunk_no;
     uint64_t total_lines;
-    uint64_t start;
     char* data;
     bool operator<(chunk_details const& other) const {
     return (chunk_no < other.chunk_no);
@@ -80,13 +79,20 @@ struct chunk_details{
 
 struct find_word{
     wc_word word;
-    //int chunk_no[1];
-    std::vector <std::vector <uint64_t>> line;
     std::vector <uint64_t> chunk_no;
 };
 
+struct value{
+    uint64_t line_no;
+    uint64_t chunk_no;
+    std::vector <uint64_t> line;
+    std::vector <uint64_t> cn;
+    bool operator==(value const& other) const {
+        return (line.at(cn.size()-1) == other.line.at(other.cn.size()-1)) && (cn.at(cn.size()-1) == other.cn.at(other.cn.size()-1));
+    }
+};
 
-class WordsMR : public MapReduceSort<WordsMR, wc_string, wc_word, uint64_t, hash_container<wc_word, uint64_t, sum_combiner, wc_word_hash> >
+class WordsMR : public MapReduceSort<WordsMR, wc_string, wc_word, value, hash_container<wc_word, value, buffer_combiner, wc_word_hash> >
 {
     char* data;
     uint64_t data_size;
@@ -95,9 +101,7 @@ class WordsMR : public MapReduceSort<WordsMR, wc_string, wc_word, uint64_t, hash
     std::vector <find_word> match;
     std::vector <chunk_details> chunk_status;
     std::vector <chunk_details> current_chunk;
-    //std::atomic<int> chunk_no_;
     uint64_t number_of_chunks;
-    std::vector<wc_word> stopwords;
 
 public:
     explicit WordsMR(char* _data, uint64_t length, uint64_t _chunk_size) :
@@ -125,9 +129,9 @@ public:
     {
 
         chunk_details temp;
-        int index_;
+        uint64_t index_;
 
-        for(int i=0; i < current_chunk.size(); i++){
+        for(uint64_t i=0; i < current_chunk.size(); i++){
             if(current_chunk.at(i).data == s.data){
                 temp = current_chunk.at(i);
                 index_ = i;
@@ -144,31 +148,33 @@ public:
 
         uint64_t i = 0;
         while(i < s.len)
-        {            
+        {   
             while(i < s.len && (s.data[i] < 'A' || s.data[i] > 'Z')){
                 i++;
                 if(s.data[i] == '\n'){
                     count_lines++;
                     temp.total_lines = count_lines;   
                 }
-                
+            
             }
 
             uint64_t start = i;
             while(i < s.len && ((s.data[i] >= 'A' && s.data[i] <= 'Z') || s.data[i] == '\''))
                 i++;
+
             if(i > start)
             {
                 s.data[i] = 0;
                 wc_word word = { s.data+start };
-
+                
                 for(uint64_t k = 0; k < match.size(); k++){
+
                     if(word == match.at(k).word){
    
-                        if(match.at(k).line.at(index_).empty())
-                        match.at(k).line.at(index_).push_back(count_lines);
-                        else if(count_lines>match.at(k).line.at(index_).at(match.at(k).line.at(index_).size()-1) )
-                        match.at(k).line.at(index_).push_back(count_lines);
+                        value vl;
+                        vl.line_no = count_lines;
+                        vl.chunk_no = index_;
+                        emit_intermediate(out, match.at(k).word, vl);
 
                     }
                     
@@ -193,6 +199,7 @@ public:
             return 0;
         }
 
+        //Keeps track of the file we processing
         chunk_details temp;
         temp.chunk_no = number_of_chunks;
 
@@ -213,8 +220,6 @@ public:
         
         splitter_pos = end;
 
-        /******** I want to know how many rows does each word have ******/
-        for(uint64_t k = 0; k < match.size(); k++)match.at(k).line.push_back(std::vector <uint64_t>());
         current_chunk.push_back(temp);
         number_of_chunks++;
 
@@ -222,32 +227,60 @@ public:
         return 1;
     }
 
-    void display(int Num_Display){
+    /*************************************************************************/
+    // Lets overload the reduce function
+    void reduce(key_type const& key, reduce_iterator const& values, 
+        std::vector<keyval>& out) const {
+        value val;
+ 
+        while (values.next(val))
+        {
+            val.line.push_back(val.line_no);
+            val.cn.push_back(val.chunk_no);
 
-         std::sort(chunk_status.begin(),chunk_status.end());
+            keyval kv = {key, val};
+            out.push_back(kv);
 
-        for(uint64_t i = 0; i < match.size(); i++){
-            printf(match.at(i).word.data );
-            printf(" - Lines are :");
-
-            int tot_lines = 0;
-            int num_of_display = 0;
-            for(uint64_t j = 0; j < match.at(i).line.size(); j++){
-                
-                for(uint64_t m = 0; m < match.at(i).line.at(j).size(); m++){
-                    num_of_display++;
-                    printf(" %d", match.at(i).line.at(j).at(m)+tot_lines);
-                    if(num_of_display >= Num_Display)break;
+            if(out.size()>1){
+                if(out.at(out.size()-1).key == out.at(out.size()-2).key){
+                    
+                    //if the values of the key are the same, keep one for one value
+                    if(!(out.at(out.size()-2).val == out.at(out.size()-1).val)
+                    ){
+                    out.at(out.size()-2).val.line.push_back(out.at(out.size()-1).val.line_no);
+                    out.at(out.size()-2).val.cn.push_back(out.at(out.size()-1).val.chunk_no);
+                    }
+                    //All values of the same key are merged together
+                    out.pop_back();
+                    
                 }
-                tot_lines += chunk_status.at(j).total_lines -1;
-
-                if(num_of_display >= Num_Display)break;
-                
             }
-            printf("\n" );
+            
         }
+
         
-     }
+    }
+
+void fix_arrange(std::vector<WordsMR::keyval> &result){
+    std::sort(chunk_status.begin(),chunk_status.end());
+    
+    for (size_t i = 0; i < result.size(); i++)
+    {
+        //add line numbers from other chunks
+        for (size_t j = 0; j < result[i].val.line.size(); j++){
+            int summer = 0;
+            for(int k = 0; k < result[i].val.cn.at(j); k++)  
+                summer+=chunk_status.at(k).total_lines-1;
+
+            result[i].val.line.at(j) += summer;
+            
+        }
+        //Arrange the line numbers in orderly manner
+        std::sort(result[i].val.line.begin(),result[i].val.line.end());
+
+    }
+}
+
 
 };
 
@@ -341,7 +374,24 @@ int main(int argc, char *argv[])
 
     printf("\nInverted_index Results:\n");
 
-    mapReduce.display(disp_num);
+    //mapReduce.display(disp_num);
+    mapReduce.fix_arrange(result);
+
+    for (size_t i = 0; i < result.size(); i++)
+    {
+        printf("%15s - ", result[result.size()-1-i].key.data);
+
+        for (size_t j = 0; j < result[result.size()-1-i].val.line.size(); j++){
+            printf("%lu ", result[result.size()-1-i].val.line.at(j));
+
+            if(j>=disp_num)break;
+        }
+        
+        
+        printf("\n");
+    }
+
+    
 
     free (fdata);
 
