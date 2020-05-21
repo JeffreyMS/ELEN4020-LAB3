@@ -36,7 +36,7 @@
 #endif
 
 #include "map_reduce.h"
-#define DEFAULT_DISP_NUM 10
+#define DEFAULT_DISP_NUM 20
 
 // a passage from the text. The input data to the Map-Reduce
 struct wc_string {

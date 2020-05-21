@@ -379,16 +379,16 @@ int main(int argc, char *argv[])
 
     for (size_t i = 0; i < result.size(); i++)
     {
-        printf("%15s - ", result[result.size()-1-i].key.data);
+        printf("%15s - ", result[i].key.data);
 
-        for (size_t j = 0; j < result[result.size()-1-i].val.line.size(); j++){
+        for (size_t j = 0; j < result[i].val.line.size(); j++){
             if(j>=disp_num)break;
-            printf("%lu ", result[result.size()-1-i].val.line.at(j));
+            printf("%lu ", result[i].val.line.at(j));
 
         }
         
         
-        printf("\n");
+        printf("\n\n");
     }
 
     
